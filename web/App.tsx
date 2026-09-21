@@ -269,6 +269,7 @@ export function App() {
             })}
             onEditCharacter={() => openEditor(character)}
             onEditUser={() => openSettings('user')}
+            onToggleSpriteMode={run(async () => setSettings(await api.saveSettings({ spriteMode: !settings.spriteMode })))}
           />
         ) : (
           <EmptyState

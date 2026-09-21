@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowUp, Brain, Ellipsis, PanelLeft, Square, Trash2, Wand2 } from 'lucide-react';
+import { ArrowUp, Brain, Ellipsis, PanelLeft, PersonStanding, Square, Trash2, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, generate } from '@/api';
 import type { Character, GenerationMeta, Message, Settings } from '@/types';
@@ -31,6 +31,7 @@ interface Props {
   onEditCharacter: () => void;
   onEditUser: () => void;
   onBranched: (chatId: number) => void;
+  onToggleSpriteMode: () => void;
 }
 
 type Streaming = {
@@ -56,6 +57,7 @@ export function ChatView({
   onEditCharacter,
   onEditUser,
   onBranched,
+  onToggleSpriteMode,
 }: Props) {
   const confirm = useConfirm();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -251,6 +253,10 @@ export function ChatView({
   const { card } = character;
   const userAvatar = settings.userAvatar || null;
   const background = useImageUrl(settings.chatBackground);
+  const sprite = useImageUrl(character.sprites.neutral);
+  // Decided by whether a sprite exists rather than whether it has loaded, so
+  // the layout doesn't jump once the picture arrives.
+  const spriteMode = settings.spriteMode && !!character.sprites.neutral;
   const canSend = !!input.trim() || last?.role === 'user';
 
   return (
@@ -259,6 +265,13 @@ export function ChatView({
         <div className="pointer-events-none absolute inset-0 z-0" aria-hidden>
           <img src={background} alt="" className="size-full object-cover" />
           <div className="bg-background absolute inset-0" style={{ opacity: settings.chatBackgroundDim / 100 }} />
+        </div>
+      )}
+      {spriteMode && sprite && (
+        // Stands on the bottom edge; the chat panel covers the lower part of it,
+        // the way a visual novel's text box does.
+        <div className="pointer-events-none absolute inset-x-0 top-12 bottom-0 z-0 flex justify-center" aria-hidden>
+          <img src={sprite} alt="" className="animate-in fade-in size-full object-contain object-bottom duration-300" />
         </div>
       )}
       <header
@@ -288,7 +301,24 @@ export function ChatView({
         <Button
           variant="ghost"
           size="sm"
-          className="text-muted-foreground ml-auto"
+          className={cn('text-muted-foreground ml-auto', spriteMode && 'bg-accent text-accent-foreground')}
+          aria-pressed={spriteMode}
+          onClick={() => {
+            if (character.sprites.neutral) return onToggleSpriteMode();
+            toast.info(`Give ${character.name} a sprite first`, {
+              description: 'Upload one on the Profile tab of their card.',
+            });
+            onEditCharacter();
+          }}
+          aria-label="Sprite mode"
+        >
+          <PersonStanding />
+          <span className="max-sm:hidden">Sprite</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground"
           onClick={() => setMemoryOpen(true)}
           aria-label="Chat memory"
         >
@@ -297,195 +327,207 @@ export function ChatView({
         </Button>
       </header>
 
-      {/* Messages */}
-      <div
-        ref={scrollRef}
-        className="relative z-10 flex-1 overflow-y-auto"
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-          const delta = el.scrollTop - lastScrollTop.current;
-          lastScrollTop.current = el.scrollTop;
-          if (el.scrollTop < 48) setHeaderHidden(false);
-          else if (delta > 4) setHeaderHidden(true);
-          else if (delta < -4) setHeaderHidden(false);
-        }}
-      >
-        <div className="mx-auto w-full max-w-[46rem] px-4 pt-16 pb-6 md:pt-6">
-          {card.scenario && (
-            <section aria-label="Scenario" className="pt-4 pb-6">
-              <p className="rp-epigraph">{macros(card.scenario)}</p>
-              <div className="rp-dinkus mt-5" aria-hidden />
-            </section>
-          )}
-          <div className={cn(settings.messageBubbles ? 'space-y-1' : 'divide-border/60 divide-y')}>
-            {messages.map((m) => {
-              // Only a message that was actually named is being rewritten. The
-              // old fallback to the last message made impersonation, which names
-              // nothing, look like it was overwriting the reply above it.
-              const isStreamTarget = !!streaming?.targetId && m.id === streaming.targetId;
-              const isUser = m.role === 'user';
-              return (
-                <MessageItem
-                  key={m.id}
-                  message={m}
-                  name={isUser ? settings.userName : character.name}
-                  avatar={isUser ? userAvatar : character.avatar}
-                  text={isStreamTarget ? streaming.text : macros(m.swipes[m.swipe_index] ?? '')}
-                  streaming={isStreamTarget}
-                  isLast={m.id === last?.id}
-                  busy={streaming !== null}
-                  bubble={settings.messageBubbles}
-                  selecting={selection !== null}
-                  selected={selection?.includes(m.id)}
-                  onSelect={() => selectFrom(m)}
-                  onSwipe={safe((dir: -1 | 1) => swipe(m, dir))}
-                  onRegenerate={safe(() => regenerate(m))}
-                  onEdit={safe((content: string) => edit(m, content))}
-                  onDelete={safe(() => remove(m))}
-                  reasoning={isStreamTarget ? streaming.reasoning : undefined}
-                  reasoningChars={m.meta?.[m.swipe_index]?.reasoningChars}
-                  onLoadReasoning={() =>
-                    api.getMessageMeta(m.id, m.swipe_index).then((full) => full.reasoning ?? '')
-                  }
-                  onImpersonate={safe(() => runGeneration('impersonate', m.id))}
-                  onBranch={safe(async () => {
-                    const branch = await api.branchChat(chatId, m.id);
-                    toast.success('Branched into a new chat');
-                    onBranched(branch.id);
-                  })}
-                  onOpenProfile={() => setProfile(isUser ? 'user' : 'character')}
-                  onOpenDetails={() =>
-                    setDetails({
-                      messageId: m.id,
-                      swipeIndex: m.swipe_index,
-                      swipeCount: m.swipes.length,
-                      meta: m.meta?.[m.swipe_index] ?? null,
-                    })
-                  }
-                />
-              );
-            })}
-            {streaming && !streaming.targetId && (
-              <MessageItem
-                role={streaming.mode === 'impersonate' ? 'user' : 'assistant'}
-                name={streaming.mode === 'impersonate' ? settings.userName : character.name}
-                avatar={streaming.mode === 'impersonate' ? userAvatar : character.avatar}
-                text={streaming.text}
-                reasoning={streaming.reasoning}
-                streaming
-                isLast
-                busy
-                bubble={settings.messageBubbles}
-                onOpenProfile={() => setProfile(streaming.mode === 'impersonate' ? 'user' : 'character')}
-              />
-            )}
-          </div>
-        </div>
-      </div>
+      {/* Sprite mode leaves the upper part of the screen to the sprite. */}
+      {spriteMode && <div className="pointer-events-none flex-1" />}
 
-      {/* Composer: one line until what you write needs more. */}
-      <div className="relative z-10 mx-auto w-full max-w-[46rem] px-4 pb-4">
-        {selection !== null && (
-          <div className="bg-card mb-2 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 shadow-sm">
-            <span className="min-w-0 flex-1 text-sm">
-              {selection.length
-                ? `${selection.length} message${selection.length === 1 ? '' : 's'} selected, from the one you picked to the end.`
-                : 'Pick a message. It and everything after it will go.'}
-            </span>
-            <Button variant="ghost" size="sm" onClick={() => setSelection(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              disabled={!selection.length}
-              onClick={() => deleteSelected().catch(errorToast)}
-            >
-              <Trash2 />
-              Delete
-            </Button>
-          </div>
+      {/* Normally this wrapper does nothing to the layout; in sprite mode it is the panel at the bottom. */}
+      <div
+        className={cn(
+          spriteMode
+            ? 'bg-background/80 relative z-10 mx-auto flex h-[42%] min-h-0 w-full max-w-[48rem] flex-col rounded-t-2xl border border-b-0 shadow-lg backdrop-blur-md max-md:h-[50%]'
+            : 'contents',
         )}
-        <form
-          className="bg-card focus-within:border-ring focus-within:ring-ring/30 flex items-center gap-1 rounded-2xl border px-2 py-1.5 shadow-sm transition-[box-shadow,border-color] focus-within:ring-[3px]"
-          onSubmit={(e) => {
-            e.preventDefault();
-            send();
+      >
+        {/* Messages */}
+        <div
+          ref={scrollRef}
+          className="relative z-10 flex-1 overflow-y-auto"
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            const delta = el.scrollTop - lastScrollTop.current;
+            lastScrollTop.current = el.scrollTop;
+            if (el.scrollTop < 48) setHeaderHidden(false);
+            else if (delta > 4) setHeaderHidden(true);
+            else if (delta < -4) setHeaderHidden(false);
           }}
         >
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+          <div className={cn('mx-auto w-full max-w-[46rem] px-4 pb-6', spriteMode ? 'pt-3' : 'pt-16 md:pt-6')}>
+            {card.scenario && (
+              <section aria-label="Scenario" className="pt-4 pb-6">
+                <p className="rp-epigraph">{macros(card.scenario)}</p>
+                <div className="rp-dinkus mt-5" aria-hidden />
+              </section>
+            )}
+            <div className={cn(settings.messageBubbles ? 'space-y-1' : 'divide-border/60 divide-y')}>
+              {messages.map((m) => {
+                // Only a message that was actually named is being rewritten. The
+                // old fallback to the last message made impersonation, which names
+                // nothing, look like it was overwriting the reply above it.
+                const isStreamTarget = !!streaming?.targetId && m.id === streaming.targetId;
+                const isUser = m.role === 'user';
+                return (
+                  <MessageItem
+                    key={m.id}
+                    message={m}
+                    name={isUser ? settings.userName : character.name}
+                    avatar={isUser ? userAvatar : character.avatar}
+                    text={isStreamTarget ? streaming.text : macros(m.swipes[m.swipe_index] ?? '')}
+                    streaming={isStreamTarget}
+                    isLast={m.id === last?.id}
+                    busy={streaming !== null}
+                    bubble={settings.messageBubbles}
+                    selecting={selection !== null}
+                    selected={selection?.includes(m.id)}
+                    onSelect={() => selectFrom(m)}
+                    onSwipe={safe((dir: -1 | 1) => swipe(m, dir))}
+                    onRegenerate={safe(() => regenerate(m))}
+                    onEdit={safe((content: string) => edit(m, content))}
+                    onDelete={safe(() => remove(m))}
+                    reasoning={isStreamTarget ? streaming.reasoning : undefined}
+                    reasoningChars={m.meta?.[m.swipe_index]?.reasoningChars}
+                    onLoadReasoning={() =>
+                      api.getMessageMeta(m.id, m.swipe_index).then((full) => full.reasoning ?? '')
+                    }
+                    onImpersonate={safe(() => runGeneration('impersonate', m.id))}
+                    onBranch={safe(async () => {
+                      const branch = await api.branchChat(chatId, m.id);
+                      toast.success('Branched into a new chat');
+                      onBranched(branch.id);
+                    })}
+                    onOpenProfile={() => setProfile(isUser ? 'user' : 'character')}
+                    onOpenDetails={() =>
+                      setDetails({
+                        messageId: m.id,
+                        swipeIndex: m.swipe_index,
+                        swipeCount: m.swipes.length,
+                        meta: m.meta?.[m.swipe_index] ?? null,
+                      })
+                    }
+                  />
+                );
+              })}
+              {streaming && !streaming.targetId && (
+                <MessageItem
+                  role={streaming.mode === 'impersonate' ? 'user' : 'assistant'}
+                  name={streaming.mode === 'impersonate' ? settings.userName : character.name}
+                  avatar={streaming.mode === 'impersonate' ? userAvatar : character.avatar}
+                  text={streaming.text}
+                  reasoning={streaming.reasoning}
+                  streaming
+                  isLast
+                  busy
+                  bubble={settings.messageBubbles}
+                  onOpenProfile={() => setProfile(streaming.mode === 'impersonate' ? 'user' : 'character')}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Composer: one line until what you write needs more. */}
+        <div className="relative z-10 mx-auto w-full max-w-[46rem] px-4 pb-4">
+          {selection !== null && (
+            <div className="bg-card mb-2 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 shadow-sm">
+              <span className="min-w-0 flex-1 text-sm">
+                {selection.length
+                  ? `${selection.length} message${selection.length === 1 ? '' : 's'} selected, from the one you picked to the end.`
+                  : 'Pick a message. It and everything after it will go.'}
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => setSelection(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={!selection.length}
+                onClick={() => deleteSelected().catch(errorToast)}
+              >
+                <Trash2 />
+                Delete
+              </Button>
+            </div>
+          )}
+          <form
+            className="bg-card focus-within:border-ring focus-within:ring-ring/30 flex items-center gap-1 rounded-2xl border px-2 py-1.5 shadow-sm transition-[box-shadow,border-color] focus-within:ring-[3px]"
+            onSubmit={(e) => {
+              e.preventDefault();
+              send();
+            }}
+          >
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  // A ring here reads as a box inside a box. Focus shows as a fill instead.
+                  className="text-muted-foreground data-[state=open]:bg-accent focus-visible:bg-accent shrink-0 focus-visible:ring-0"
+                  aria-label="Chat tools"
+                >
+                  <Ellipsis />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="start" className="w-48">
+                <DropdownMenuItem
+                  // If your turn is already there, rewrite it rather than adding a
+                  // second one beside it.
+                  onSelect={() =>
+                    safe(() => runGeneration('impersonate', last?.role === 'user' ? last.id : undefined))()
+                  }
+                  disabled={!!streaming || !messages.length}
+                >
+                  <Wand2 />
+                  Impersonate
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setSelection([])} disabled={!messages.length}>
+                  <Trash2 />
+                  Delete messages
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <Textarea
+              ref={inputRef}
+              value={input}
+              placeholder={`Message ${character.name}…`}
+              aria-label="Message"
+              rows={1}
+              // Your turn is written in the same face as the story it joins.
+              className="max-h-60 min-h-0 flex-1 resize-none border-0 bg-transparent px-1 py-1.5 font-serif text-base leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent"
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+                if (e.ctrlKey || e.metaKey) {
+                  // Regenerate without losing whatever is half-typed in the box.
+                  if (!canRegenerate) return;
+                  e.preventDefault();
+                  safe(regenerate)();
+                } else if (!e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+            />
+
+            {streaming ? (
               <Button
                 type="button"
-                variant="ghost"
                 size="icon-sm"
-                // A ring here reads as a box inside a box. Focus shows as a fill instead.
-                className="text-muted-foreground data-[state=open]:bg-accent focus-visible:bg-accent shrink-0 focus-visible:ring-0"
-                aria-label="Chat tools"
+                variant="secondary"
+                className="shrink-0 rounded-full"
+                aria-label="Stop"
+                onClick={() => abortRef.current?.abort()}
               >
-                <Ellipsis />
+                <Square className="size-3.5 fill-current" />
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="start" className="w-48">
-              <DropdownMenuItem
-                // If your turn is already there, rewrite it rather than adding a
-                // second one beside it.
-                onSelect={() =>
-                  safe(() => runGeneration('impersonate', last?.role === 'user' ? last.id : undefined))()
-                }
-                disabled={!!streaming || !messages.length}
-              >
-                <Wand2 />
-                Impersonate
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setSelection([])} disabled={!messages.length}>
-                <Trash2 />
-                Delete messages
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <Textarea
-            ref={inputRef}
-            value={input}
-            placeholder={`Message ${character.name}…`}
-            aria-label="Message"
-            rows={1}
-            // Your turn is written in the same face as the story it joins.
-            className="max-h-60 min-h-0 flex-1 resize-none border-0 bg-transparent px-1 py-1.5 font-serif text-base leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent"
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
-              if (e.ctrlKey || e.metaKey) {
-                // Regenerate without losing whatever is half-typed in the box.
-                if (!canRegenerate) return;
-                e.preventDefault();
-                safe(regenerate)();
-              } else if (!e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-          />
-
-          {streaming ? (
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="secondary"
-              className="shrink-0 rounded-full"
-              aria-label="Stop"
-              onClick={() => abortRef.current?.abort()}
-            >
-              <Square className="size-3.5 fill-current" />
-            </Button>
-          ) : (
-            <Button type="submit" size="icon-sm" className="shrink-0 rounded-full" aria-label="Send" disabled={!canSend}>
-              <ArrowUp />
-            </Button>
-          )}
-        </form>
+            ) : (
+              <Button type="submit" size="icon-sm" className="shrink-0 rounded-full" aria-label="Send" disabled={!canSend}>
+                <ArrowUp />
+              </Button>
+            )}
+          </form>
+        </div>
       </div>
 
       <MemoryDialog open={memoryOpen} onOpenChange={setMemoryOpen} chatId={chatId} characterName={character.name} />

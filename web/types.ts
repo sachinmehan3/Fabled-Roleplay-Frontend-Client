@@ -18,6 +18,11 @@ export interface Character {
   name: string;
   /** Id of the picture in the browser's image store. */
   avatar: string | null;
+  /**
+   * Full-size pictures for sprite mode, by expression. Only `neutral` is used
+   * for now; the others are room for expressions later.
+   */
+  sprites: Record<string, string>;
   card: CharacterCard;
   created_at?: number;
   /** How many chats you have with them. */
@@ -188,6 +193,8 @@ export interface Settings {
   messageBubbles: boolean;
   chatBackground: string;
   chatBackgroundDim: number;
+  /** Show the character's sprite large, with the chat in a panel below it. */
+  spriteMode: boolean;
   /** Kept in this browser only, and sent nowhere but the provider. */
   apiKey: string;
 }

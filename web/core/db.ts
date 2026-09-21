@@ -32,6 +32,8 @@ export interface CharacterRow {
   id: number;
   name: string;
   avatar: string | null;
+  /** Missing on characters saved before sprites existed. */
+  sprites?: Record<string, string>;
   card: CharacterCard;
   created_at: number;
 }
@@ -127,6 +129,7 @@ export const DEFAULT_SETTINGS: Settings = {
   messageBubbles: true,
   chatBackground: '',
   chatBackgroundDim: 60,
+  spriteMode: false,
   apiKey: '',
 };
 

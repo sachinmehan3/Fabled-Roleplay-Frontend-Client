@@ -21,6 +21,7 @@ const settings = (over: Partial<Settings> = {}): Settings => ({
   messageBubbles: true,
   chatBackground: '',
   chatBackgroundDim: 60,
+  spriteMode: false,
   ...over,
 });
 

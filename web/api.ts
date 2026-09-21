@@ -67,7 +67,15 @@ const requireLorebook = async (id: number) => required(await db.getLorebook(id),
 const requireMessage = async (id: number) => required(await db.getMessage(id), 'Message');
 
 function characterOut(row: CharacterRow, counts: Record<number, number>): Character {
-  return { id: row.id, name: row.name, avatar: row.avatar, card: row.card, created_at: row.created_at, chats: counts[row.id] ?? 0 };
+  return {
+    id: row.id,
+    name: row.name,
+    avatar: row.avatar,
+    sprites: row.sprites ?? {},
+    card: row.card,
+    created_at: row.created_at,
+    chats: counts[row.id] ?? 0,
+  };
 }
 
 async function oneCharacter(id: number): Promise<Character> {
@@ -299,10 +307,26 @@ export const api = {
     return oneCharacter(id);
   },
 
+  uploadCharacterSprite: async (id: number, file: File, expression = 'neutral') => {
+    const c = await requireCharacter(id);
+    const sprites = c.sprites ?? {};
+    await db.updateCharacter(id, { sprites: { ...sprites, [expression]: await saveImage(file, sprites[expression]) } });
+    return oneCharacter(id);
+  },
+
+  removeCharacterSprite: async (id: number, expression = 'neutral') => {
+    const c = await requireCharacter(id);
+    const { [expression]: gone, ...rest } = c.sprites ?? {};
+    await db.deleteImage(gone);
+    await db.updateCharacter(id, { sprites: rest });
+    return oneCharacter(id);
+  },
+
   deleteCharacter: async (id: number) => {
     const c = await requireCharacter(id);
     await db.deleteCharacter(id);
     await db.deleteImage(c.avatar);
+    for (const sprite of Object.values(c.sprites ?? {})) await db.deleteImage(sprite);
     return { ok: true };
   },
 

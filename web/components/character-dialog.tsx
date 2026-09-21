@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { AvatarPicker } from '@/components/avatar-picker';
+import { SpritePicker } from '@/components/sprite-picker';
 import { Field } from '@/components/form-field';
 
 const EMPTY_CARD: CharacterCard = {
@@ -49,6 +50,8 @@ export function CharacterDialog({ open, onOpenChange, character, onSaved }: Prop
   const [tagsText, setTagsText] = useState('');
   const [avatar, setAvatar] = useState<File | null>(null);
   const [avatarCleared, setAvatarCleared] = useState(false);
+  const [sprite, setSprite] = useState<File | null>(null);
+  const [spriteCleared, setSpriteCleared] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Load the card each time the dialog opens, so an abandoned edit doesn't linger.
@@ -58,6 +61,8 @@ export function CharacterDialog({ open, onOpenChange, character, onSaved }: Prop
     setTagsText(character?.card.tags.join(', ') ?? '');
     setAvatar(null);
     setAvatarCleared(false);
+    setSprite(null);
+    setSpriteCleared(false);
   }, [open, character]);
 
   const set = <K extends keyof CharacterCard>(k: K, v: CharacterCard[K]) => setForm((f) => ({ ...f, [k]: v }));
@@ -81,6 +86,8 @@ export function CharacterDialog({ open, onOpenChange, character, onSaved }: Prop
       let saved = character ? await api.updateCharacter(character.id, card) : await api.createCharacter(card);
       if (avatar) saved = await api.uploadCharacterAvatar(saved.id, avatar);
       else if (avatarCleared && saved.avatar) saved = await api.removeCharacterAvatar(saved.id);
+      if (sprite) saved = await api.uploadCharacterSprite(saved.id, sprite);
+      else if (spriteCleared && saved.sprites.neutral) saved = await api.removeCharacterSprite(saved.id);
       onSaved(saved, !character);
       toast.success(character ? `Saved ${saved.name}` : `Created ${saved.name}`);
       onOpenChange(false);
@@ -123,6 +130,16 @@ export function CharacterDialog({ open, onOpenChange, character, onSaved }: Prop
                 setAvatarCleared(!f);
               }}
               hint="PNG, JPEG, WebP or GIF. Imported cards use the card image itself."
+            />
+
+            <SpritePicker
+              file={character?.sprites.neutral ?? null}
+              pending={sprite}
+              cleared={spriteCleared}
+              onChange={(f) => {
+                setSprite(f);
+                setSpriteCleared(!f);
+              }}
             />
 
             <Field id="card-name" label="Name" hint="Replaces {{char}} in the card and prompts.">
