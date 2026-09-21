@@ -311,12 +311,12 @@ export function ChatView({
           else if (delta < -4) setHeaderHidden(false);
         }}
       >
-        <div className="mx-auto w-full max-w-4xl px-4 pt-16 pb-6 md:pt-6">
+        <div className="mx-auto w-full max-w-[46rem] px-4 pt-16 pb-6 md:pt-6">
           {card.scenario && (
-            <div className="bg-muted/40 text-muted-foreground mb-4 rounded-xl border border-dashed px-4 py-3 text-sm">
-              <span className="text-foreground mr-1.5 font-medium">Scenario</span>
-              {macros(card.scenario)}
-            </div>
+            <section aria-label="Scenario" className="pt-4 pb-6">
+              <p className="rp-epigraph">{macros(card.scenario)}</p>
+              <div className="rp-dinkus mt-5" aria-hidden />
+            </section>
           )}
           <div className={cn(settings.messageBubbles ? 'space-y-1' : 'divide-border/60 divide-y')}>
             {messages.map((m) => {
@@ -385,7 +385,7 @@ export function ChatView({
       </div>
 
       {/* Composer: one line until what you write needs more. */}
-      <div className="relative z-10 mx-auto w-full max-w-4xl px-4 pb-4">
+      <div className="relative z-10 mx-auto w-full max-w-[46rem] px-4 pb-4">
         {selection !== null && (
           <div className="bg-card mb-2 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 shadow-sm">
             <span className="min-w-0 flex-1 text-sm">
@@ -452,7 +452,8 @@ export function ChatView({
             placeholder={`Message ${character.name}…`}
             aria-label="Message"
             rows={1}
-            className="max-h-60 min-h-0 flex-1 resize-none border-0 bg-transparent px-1 py-1.5 text-[15px] shadow-none focus-visible:ring-0 dark:bg-transparent"
+            // Your turn is written in the same face as the story it joins.
+            className="max-h-60 min-h-0 flex-1 resize-none border-0 bg-transparent px-1 py-1.5 font-serif text-base leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent"
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;

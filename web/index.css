@@ -5,7 +5,7 @@
 
 @theme inline {
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-serif: 'Noto Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-serif: 'Literata', ui-serif, Georgia, 'Times New Roman', serif;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -133,12 +133,16 @@
   --quote: oklch(0.84 0.13 86);
 }
 
-/* ===== chat message typography ===== */
+/* ===== chat message typography =====
+   A chat here is a story being read, so it is set like a book page: a text
+   face made for long reading, a measure near 70 characters, serif leading. */
 .rp-prose {
   font-family: var(--font-serif);
-  font-size: 15px;
-  line-height: 1.65;
+  font-size: 16px;
+  line-height: 1.72;
+  font-optical-sizing: auto;
   overflow-wrap: anywhere;
+  hyphens: auto;
 }
 .rp-prose > :first-child { margin-top: 0; }
 .rp-prose > :last-child { margin-bottom: 0; }
@@ -161,7 +165,39 @@
 .rp-prose ul { list-style: disc; }
 .rp-prose ol { list-style: decimal; }
 .rp-prose img { max-width: 100%; border-radius: var(--radius); }
-.rp-prose hr { border-color: var(--border); margin: 1em 0; }
+/* A scene break, the way fiction marks one: a dinkus rather than a rule. */
+.rp-prose hr { border: 0; margin: 1.4em 0; }
+.rp-prose hr,
+.rp-dinkus {
+  height: 11px;
+  background: var(--primary);
+  opacity: 0.7;
+  /* The sparkle from the Fabled mark, three times over. */
+  -webkit-mask-image: var(--rp-sparkle), var(--rp-sparkle), var(--rp-sparkle);
+  mask-image: var(--rp-sparkle), var(--rp-sparkle), var(--rp-sparkle);
+  -webkit-mask-position: calc(50% - 26px) center, center, calc(50% + 26px) center;
+  mask-position: calc(50% - 26px) center, center, calc(50% + 26px) center;
+  -webkit-mask-size: 11px 11px;
+  mask-size: 11px 11px;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+:root {
+  --rp-sparkle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='142 150 56 56'%3E%3Cpath d='M170 150Q170 178 198 178Q170 178 170 206Q170 178 142 178Q170 178 170 150Z'/%3E%3C/svg%3E");
+}
+
+/* The scenario opens the chat like an epigraph opens a chapter. */
+.rp-epigraph {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--muted-foreground);
+  text-align: center;
+  text-wrap: balance;
+  max-width: 34rem;
+  margin-inline: auto;
+}
 
 /* ===== avatars: one quiet tint per name, never a gradient ===== */
 .rp-avatar::after {

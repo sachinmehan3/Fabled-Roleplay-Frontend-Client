@@ -258,7 +258,7 @@ export const MessageItem = memo(function MessageItem(p: Props) {
               onChange={(e) => setDraft(e.target.value)}
               autoFocus
               aria-label="Edit message"
-              className="bg-background max-h-[60vh] font-serif text-[15px]"
+              className="bg-background max-h-[60vh] font-serif text-base leading-relaxed"
               onKeyDown={(e) => {
                 if (e.key === 'Escape') setEditing(false);
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {

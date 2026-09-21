@@ -85,3 +85,15 @@ test('an unclosed quote is left alone rather than swallowing the message', () =>
 test('empty input renders to nothing', () => {
   assert.equal(renderMarkdown('').trim(), '');
 });
+
+test('quotes and apostrophes are typeset, not typewritten', () => {
+  const html = renderMarkdown(`"It's late," she says. 'Fine.' The dogs' bowls.`);
+  assert.ok(html.includes('“It’s late,”'), html);
+  assert.ok(html.includes('‘Fine.’'), html);
+  assert.ok(html.includes('dogs’ bowls'), html);
+});
+
+test('code keeps its straight quotes', () => {
+  const html = renderMarkdown('`a = "b"`');
+  assert.ok(html.includes('&quot;b&quot;'), html);
+});

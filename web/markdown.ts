@@ -7,12 +7,29 @@ const escapeHtml = (s: string) =>
 
 const safeUrl = (href: string) => (/^(https?:|mailto:)/i.test(href.trim()) ? escapeHtml(href) : null);
 
+/**
+ * Typewriter quotes to typeset ones, as a book would print them. A quote mark
+ * after a space or an opening bracket opens; anywhere else it closes, which
+ * also makes every apostrophe (it's, dogs') the right shape.
+ */
+const curlQuotes = (s: string) =>
+  s
+    .replace(/(^|[\s([{—–-])"/g, '$1“')
+    .replace(/"/g, '”')
+    .replace(/(^|[\s([{—–-])'/g, '$1‘')
+    .replace(/'/g, '’');
+
 const md = new Marked({ gfm: true, breaks: true });
 
 md.use({
   renderer: {
     html({ text }: Tokens.HTML | Tokens.Tag) {
       return escapeHtml(text);
+    },
+    // Leaf text only: anything with children, or already escaped, keeps marked's own handling.
+    text(token: Tokens.Text | Tokens.Escape) {
+      if (('tokens' in token && token.tokens) || ('escaped' in token && token.escaped)) return false;
+      return escapeHtml(curlQuotes(token.text));
     },
     link({ href, tokens }: Tokens.Link) {
       const inner = this.parser.parseInline(tokens);
@@ -36,11 +53,11 @@ md.use({
         const m = /^(?:"([^"\n]+)"|“([^”\n]+)”)/.exec(src);
         if (!m) return undefined;
         const inner = m[1] ?? m[2];
-        return { type: 'rpQuote', raw: m[0], open: m[0][0], close: m[0].at(-1), tokens: this.lexer.inlineTokens(inner) };
+        return { type: 'rpQuote', raw: m[0], tokens: this.lexer.inlineTokens(inner) };
       },
       renderer(token) {
         const t = token as Tokens.Generic;
-        return `<span class="rp-quote">${escapeHtml(t.open)}${this.parser.parseInline(t.tokens ?? [])}${escapeHtml(t.close)}</span>`;
+        return `<span class="rp-quote">“${this.parser.parseInline(t.tokens ?? [])}”</span>`;
       },
     },
   ],
