@@ -514,12 +514,6 @@ export function ChatView({
         }}
       />
 
-      <MemoryDialog open={memoryOpen} onOpenChange={setMemoryOpen} chatId={chatId} characterName={character.name} />
-
-      {details && (
-        <GenerationDialog open onOpenChange={(o) => !o && setDetails(null)} {...details} />
-      )}
-
       <ProfileDialog
         open={profile === 'user'}
         onOpenChange={(o) => setProfile(o ? 'user' : null)}
