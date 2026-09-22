@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Check, CircleAlert, CircleCheck, Copy, LoaderCircle, Pencil, Scissors } from 'lucide-react';
+import { Check, CircleAlert, CircleCheck, Compass, Copy, LoaderCircle, Pencil, Scissors } from 'lucide-react';
 import { api } from '@/api';
 import type { GenerationMeta } from '@/types';
 import { cn } from '@/lib/utils';
@@ -196,6 +196,26 @@ export function GenerationDialog({ open, onOpenChange, messageId, swipeIndex, sw
                   The text shown in the chat no longer matches what the model produced, so the counts below describe
                   the original reply.
                 </Callout>
+              )}
+
+              {meta.directorError && (
+                <Callout tone="warn" icon={<Compass />} title="The Director could not answer">
+                  {meta.directorError}. This reply was written without a Direction.
+                </Callout>
+              )}
+              {full?.direction && (
+                <div className="grid gap-1.5">
+                  <div className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium tracking-wide uppercase">
+                    <Compass className="size-3.5" />
+                    Direction
+                  </div>
+                  <div className="bg-muted/40 rounded-lg border px-3 py-2.5 text-sm whitespace-pre-wrap">{full.direction}</div>
+                  <div className="text-muted-foreground text-xs">
+                    {meta.directionReused
+                      ? 'Kept from the version this one rewrites.'
+                      : `From ${meta.directorModel ?? 'the Director'}${meta.directorMs ? ` in ${duration(meta.directorMs)}` : ''}. The Narrator followed it; you never see it in the chat.`}
+                  </div>
+                </div>
               )}
 
               <ContextMeter used={promptTokens} contextSize={meta.contextSize} reserved={meta.maxTokens} />

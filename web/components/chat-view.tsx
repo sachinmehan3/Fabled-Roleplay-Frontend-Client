@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowUp, Brain, Ellipsis, PanelLeft, PersonStanding, Square, Trash2, Wand2 } from 'lucide-react';
+import { ArrowUp, Brain, Compass, Ellipsis, PanelLeft, PersonStanding, Square, Trash2, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, generate } from '@/api';
-import type { Character, GenerationMeta, Message, Settings } from '@/types';
+import type { Character, Chat, GenerationMeta, Message, Settings } from '@/types';
 import { cn } from '@/lib/utils';
 import { useConfirm } from '@/hooks/use-confirm';
 import { Button } from '@/components/ui/button';
@@ -19,6 +19,7 @@ import { MessageItem } from '@/components/message-item';
 import { ProfileDialog } from '@/components/profile-dialog';
 import { GenerationDialog } from '@/components/generation-dialog';
 import { MemoryDialog } from '@/components/memory-dialog';
+import { AdventureDialog } from '@/components/adventure-dialog';
 
 interface Props {
   chatId: number;
@@ -34,12 +35,19 @@ interface Props {
   onToggleSpriteMode: () => void;
 }
 
+type Mode = 'new' | 'swipe' | 'redo' | 'impersonate' | 'redirect';
 type Streaming = {
-  mode: 'new' | 'swipe' | 'redo' | 'impersonate';
+  mode: Mode;
   text: string;
   reasoning: string;
   targetId?: number;
+  /** Adventure mode: the Director is still deciding what happens. */
+  directing?: boolean;
 } | null;
+
+/** A message that starts like this goes to the Director only. */
+const NOTE_PREFIX = /^\s*\/d(?:\s|$)/i;
+
 type Details = { messageId: number; swipeIndex: number; swipeCount: number; meta: GenerationMeta | null };
 
 const applyMacros = (text: string, char: string, user: string) =>
@@ -66,6 +74,8 @@ export function ChatView({
   const [profile, setProfile] = useState<'character' | 'user' | null>(null);
   const [details, setDetails] = useState<Details | null>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [adventureOpen, setAdventureOpen] = useState(false);
+  const [chat, setChat] = useState<Chat | null>(null);
   /** Ids to delete, or null when not in delete mode. */
   const [selection, setSelection] = useState<number[] | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -79,6 +89,11 @@ export function ChatView({
 
   const reload = useCallback(async () => {
     setMessages(await api.listMessages(chatId));
+  }, [chatId]);
+
+  useEffect(() => {
+    setChat(null);
+    api.getChat(chatId).then(setChat).catch(errorToast);
   }, [chatId]);
 
   useEffect(() => {
@@ -106,23 +121,26 @@ export function ChatView({
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [messages, streaming]);
 
-  const runGeneration = async (mode: 'new' | 'swipe' | 'redo' | 'impersonate', targetId?: number) => {
+  const runGeneration = async (mode: Mode, targetId?: number) => {
     const controller = new AbortController();
     abortRef.current = controller;
     // Rewriting something further up should not drag the view to the bottom.
     if (!targetId) stickToBottom.current = true;
     setStreaming({ mode, text: '', reasoning: '', targetId });
     try {
-      await generate(
+      const saved = await generate(
         chatId,
         mode,
         {
           signal: controller.signal,
           onDelta: (d) => setStreaming((s) => (s ? { ...s, text: s.text + d } : s)),
           onReasoning: (d) => setStreaming((s) => (s ? { ...s, reasoning: s.reasoning + d } : s)),
+          onPhase: (phase) => setStreaming((s) => (s ? { ...s, directing: phase === 'director' } : s)),
         },
         targetId,
       );
+      const failed = saved?.meta[saved.swipe_index]?.directorError;
+      if (failed) toast.warning('The Director could not answer', { description: `Written without a Direction: ${failed}` });
     } catch (e) {
       if (!controller.signal.aborted) errorToast(e);
     } finally {
@@ -136,12 +154,13 @@ export function ChatView({
   const send = async () => {
     if (streaming) return;
     const text = input.trim();
+    if (text && noteBlocked) return;
     try {
       if (text) {
         const msg = await api.sendMessage(chatId, text);
         setInput('');
         setMessages((m) => [...m, msg]);
-      } else if (messages.at(-1)?.role !== 'user') {
+      } else if (messages.at(-1)?.role === 'assistant' || !messages.length) {
         return; // nothing to reply to
       }
       await runGeneration('new');
@@ -257,7 +276,11 @@ export function ChatView({
   // Decided by whether a sprite exists rather than whether it has loaded, so
   // the layout doesn't jump once the picture arrives.
   const spriteMode = settings.spriteMode && !!character.sprites.neutral;
-  const canSend = !!input.trim() || last?.role === 'user';
+  const adventure = !!chat?.adventure;
+  const isNote = NOTE_PREFIX.test(input);
+  const noteBlocked = isNote && !adventure;
+  const canSend = (!!input.trim() && !noteBlocked) || (!!last && last.role !== 'assistant');
+  const directingStatus = streaming?.directing ? 'The Director is deciding what happens…' : undefined;
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
@@ -318,6 +341,18 @@ export function ChatView({
         <Button
           variant="ghost"
           size="sm"
+          className={cn('text-muted-foreground', adventure && 'bg-accent text-accent-foreground')}
+          aria-pressed={adventure}
+          onClick={() => setAdventureOpen(true)}
+          disabled={!chat}
+          aria-label="Adventure"
+        >
+          <Compass />
+          <span className="max-sm:hidden">Adventure</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           className="text-muted-foreground"
           onClick={() => setMemoryOpen(true)}
           aria-label="Chat memory"
@@ -365,15 +400,18 @@ export function ChatView({
                 // old fallback to the last message made impersonation, which names
                 // nothing, look like it was overwriting the reply above it.
                 const isStreamTarget = !!streaming?.targetId && m.id === streaming.targetId;
-                const isUser = m.role === 'user';
+                // A Director Note is yours too, just addressed elsewhere.
+                const isUser = m.role === 'user' || m.role === 'note';
+                const name = m.role === 'note' ? `${settings.userName}, to the Director` : isUser ? settings.userName : character.name;
                 return (
                   <MessageItem
                     key={m.id}
                     message={m}
-                    name={isUser ? settings.userName : character.name}
+                    name={name}
                     avatar={isUser ? userAvatar : character.avatar}
                     text={isStreamTarget ? streaming.text : macros(m.swipes[m.swipe_index] ?? '')}
                     streaming={isStreamTarget}
+                    status={isStreamTarget ? directingStatus : undefined}
                     isLast={m.id === last?.id}
                     busy={streaming !== null}
                     bubble={settings.messageBubbles}
@@ -390,6 +428,7 @@ export function ChatView({
                       api.getMessageMeta(m.id, m.swipe_index).then((full) => full.reasoning ?? '')
                     }
                     onImpersonate={safe(() => runGeneration('impersonate', m.id))}
+                    onRedirect={adventure ? safe(() => runGeneration('redirect', m.id)) : undefined}
                     onBranch={safe(async () => {
                       const branch = await api.branchChat(chatId, m.id);
                       toast.success('Branched into a new chat');
@@ -414,6 +453,7 @@ export function ChatView({
                   avatar={streaming.mode === 'impersonate' ? userAvatar : character.avatar}
                   text={streaming.text}
                   reasoning={streaming.reasoning}
+                  status={directingStatus}
                   streaming
                   isLast
                   busy
@@ -427,6 +467,20 @@ export function ChatView({
 
         {/* Composer: one line until what you write needs more. */}
         <div className="relative z-10 mx-auto w-full max-w-[46rem] px-4 pb-4">
+          {isNote && (
+            <div
+              role="status"
+              className={cn(
+                'mb-2 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs',
+                noteBlocked
+                  ? 'border-destructive/30 bg-destructive/10 text-destructive'
+                  : 'border-primary/30 bg-primary/5 text-primary',
+              )}
+            >
+              <Compass className="size-3.5" />
+              {noteBlocked ? 'Adventure mode is off' : `To the Director - ${character.name} won't see this`}
+            </div>
+          )}
           {selection !== null && (
             <div className="bg-card mb-2 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 shadow-sm">
               <span className="min-w-0 flex-1 text-sm">
@@ -490,7 +544,7 @@ export function ChatView({
             <Textarea
               ref={inputRef}
               value={input}
-              placeholder={`Message ${character.name}…`}
+              placeholder={adventure ? `Message ${character.name}, or /d to suggest to the Director…` : `Message ${character.name}…`}
               aria-label="Message"
               rows={1}
               // Your turn is written in the same face as the story it joins.
@@ -529,6 +583,10 @@ export function ChatView({
           </form>
         </div>
       </div>
+
+      {chat && (
+        <AdventureDialog open={adventureOpen} onOpenChange={setAdventureOpen} chat={chat} onChatChanged={setChat} />
+      )}
 
       <MemoryDialog open={memoryOpen} onOpenChange={setMemoryOpen} chatId={chatId} characterName={character.name} />
 

@@ -340,6 +340,8 @@ export const api = {
 
   listChats: (charId: number): Promise<Chat[]> => db.listChats(charId),
 
+  getChat: (id: number): Promise<Chat> => requireChat(id),
+
   createChat: async (charId: number): Promise<Chat> => {
     const c = await requireCharacter(charId);
     const chat = await db.insertChat(c.id, '');

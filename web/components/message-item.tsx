@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronRight as Caret,
+  Compass,
   Copy,
   Ellipsis,
   GitBranch,
@@ -13,6 +14,7 @@ import {
   Pencil,
   RefreshCw,
   Trash2,
+  TriangleAlert,
   Wand2,
   type LucideIcon,
 } from 'lucide-react';
@@ -48,6 +50,10 @@ interface Props {
   onOpenDetails?: () => void;
   onBranch?: () => void;
   onImpersonate?: () => void;
+  /** Adventure mode: ask the Director for a different outcome. */
+  onRedirect?: () => void;
+  /** Shown in place of the typing dots while nothing has been written yet. */
+  status?: string;
   /** Draw a panel behind the message. Off leaves plain text on the page. */
   bubble?: boolean;
   /** Delete mode: the row becomes a target rather than a conversation. */
@@ -134,6 +140,9 @@ export const MessageItem = memo(function MessageItem(p: Props) {
 
   const m = p.message;
   const isUser = (m?.role ?? p.role) === 'user';
+  // A Director Note: yours, but addressed to the Director, not part of the story.
+  const isNote = m?.role === 'note';
+  const directorError = m?.meta?.[m.swipe_index]?.directorError;
   // Every reply can be asked for another version, so every reply shows the count.
   const canSwipe = !!m && m.role === 'assistant';
   const atLastSwipe = !!m && m.swipe_index >= m.swipes.length - 1;
@@ -167,6 +176,9 @@ export const MessageItem = memo(function MessageItem(p: Props) {
           ...(m.role === 'assistant'
             ? [{ key: 'regenerate', label: 'Regenerate', icon: RefreshCw, onClick: p.onRegenerate }]
             : []),
+          ...(m.role === 'assistant' && p.onRedirect
+            ? [{ key: 'redirect', label: 'Re-roll the Direction', icon: Compass, onClick: p.onRedirect }]
+            : []),
           ...(isUser && p.onImpersonate
             ? [{ key: 'impersonate', label: 'Write this message for me', icon: Wand2, onClick: p.onImpersonate }]
             : []),
@@ -188,6 +200,7 @@ export const MessageItem = memo(function MessageItem(p: Props) {
       onClick={p.selecting ? p.onSelect : undefined}
       className={cn(
         'group/msg flex gap-3 py-4 sm:gap-4',
+        isNote && 'opacity-70',
         p.selecting && 'cursor-pointer rounded-xl px-2 transition-colors',
         p.selecting && (p.selected ? 'bg-destructive/10' : 'hover:bg-accent/40'),
       )}
@@ -219,12 +232,22 @@ export const MessageItem = memo(function MessageItem(p: Props) {
             disabled={!p.onOpenProfile}
             className={cn(
               'min-w-0 truncate text-sm font-semibold outline-none enabled:hover:underline disabled:cursor-default',
-              !isUser && 'text-primary',
+              !isUser && !isNote && 'text-primary',
             )}
           >
             {p.name}
           </button>
           {time && <span className="text-muted-foreground shrink-0 text-xs">{time}</span>}
+          {directorError && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="shrink-0 text-amber-600 dark:text-amber-400" aria-label="Written without a Direction">
+                  <TriangleAlert className="size-3.5" />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>The Director could not answer, so this was written without a Direction.</TooltipContent>
+            </Tooltip>
+          )}
 
           {actions.length > 0 && (
             <div className="ml-auto flex shrink-0 items-center gap-0.5">
@@ -247,7 +270,7 @@ export const MessageItem = memo(function MessageItem(p: Props) {
           )}
         </div>
 
-        {!isUser && (p.reasoning || p.reasoningChars) && !editing && (
+        {!isUser && !isNote && (p.reasoning || p.reasoningChars) && !editing && (
           <Thinking live={p.reasoning} chars={p.reasoningChars} onLoad={p.onLoadReasoning} />
         )}
 
@@ -284,8 +307,19 @@ export const MessageItem = memo(function MessageItem(p: Props) {
           </div>
         ) : (
           <div className="mt-1">
-            <div className={cn(p.bubble && 'bg-muted/60 rounded-xl px-4 py-3')}>
-              {p.streaming && !p.text ? (
+            <div
+              className={cn(
+                p.bubble && 'bg-muted/60 rounded-xl px-4 py-3',
+                isNote && 'border-border rounded-xl border border-dashed px-4 py-3 italic',
+                isNote && p.bubble && 'bg-transparent',
+              )}
+            >
+              {p.streaming && !p.text && p.status ? (
+                <span className="text-muted-foreground inline-flex items-center gap-2 py-1 text-sm" role="status">
+                  <Compass className="size-4 animate-pulse" />
+                  {p.status}
+                </span>
+              ) : p.streaming && !p.text ? (
                 <span className="rp-typing text-muted-foreground inline-flex gap-1 py-2" aria-label="Generating">
                   <i />
                   <i />

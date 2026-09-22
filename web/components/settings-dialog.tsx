@@ -41,6 +41,7 @@ import { BackgroundPicker } from '@/components/background-picker';
 import { Checkbox } from '@/components/ui/select';
 import { Field } from '@/components/form-field';
 import { DataPanel } from '@/components/data-panel';
+import { DEFAULT_DIRECTOR_PROMPT } from '@/core/director';
 
 const PRESETS: { label: string; apiBase: string; needsKey?: boolean }[] = [
   { label: 'OpenRouter', apiBase: 'https://openrouter.ai/api/v1', needsKey: true },
@@ -501,6 +502,20 @@ export function SettingsDialog({ open, onOpenChange, settings, onSaved, tab = 'c
               </div>
             </Field>
 
+            <Field
+              id="director-model"
+              label="Director model"
+              hint="Used in adventure mode to decide what happens before the character replies. Leave it empty to use the model above. A quick, sensible model does this job well."
+            >
+              <ModelCombobox
+                id="director-model"
+                value={form.directorModel}
+                models={models}
+                placeholder={form.model ? `Same as the model above (${form.model})` : 'Same as the model above'}
+                onChange={(v) => set('directorModel', v)}
+              />
+            </Field>
+
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
               <Button type="button" variant="outline" onClick={testConnection} disabled={status.kind === 'loading'}>
                 {status.kind === 'loading' ? <LoaderCircle className="animate-spin" /> : <Zap />}
@@ -683,6 +698,27 @@ export function SettingsDialog({ open, onOpenChange, settings, onSaved, tab = 'c
               onChange={(v) => set('memoryTokens', v)}
             />
 
+            <SliderField
+              id="director-temperature"
+              label="Director temperature"
+              value={form.directorTemperature}
+              min={0}
+              max={2}
+              step={0.05}
+              hint="Adventure mode only. Lower keeps the Director's rulings steady; the character's own temperature is the one above."
+              onChange={(v) => set('directorTemperature', v)}
+            />
+            <SliderField
+              id="director-tokens"
+              label="Director history budget"
+              value={form.directorTokens}
+              min={512}
+              max={16384}
+              step={256}
+              hint="Adventure mode only. How much recent chat the Director reads each turn. Less is quicker and cheaper."
+              onChange={(v) => set('directorTokens', v)}
+            />
+
             <div className="grid gap-3">
               <Label>Thinking level</Label>
               <div className="grid grid-cols-4 gap-2">
@@ -722,6 +758,25 @@ export function SettingsDialog({ open, onOpenChange, settings, onSaved, tab = 'c
                 className="min-h-40"
                 value={form.systemPrompt}
                 onChange={(e) => set('systemPrompt', e.target.value)}
+              />
+            </Field>
+            <Field
+              id="director-prompt"
+              label="Director instructions"
+              hint={
+                <>
+                  Adventure mode only. Leave empty for the built-in instructions. Keep the{' '}
+                  <code>&lt;direction&gt;</code> and <code>&lt;state&gt;</code> reply format, or the Director's answers
+                  can't be read.
+                </>
+              }
+            >
+              <Textarea
+                id="director-prompt"
+                className="min-h-32"
+                placeholder={DEFAULT_DIRECTOR_PROMPT}
+                value={form.directorPrompt}
+                onChange={(e) => set('directorPrompt', e.target.value)}
               />
             </Field>
             <p className="text-muted-foreground text-xs">
