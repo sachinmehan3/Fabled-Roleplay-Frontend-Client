@@ -20,6 +20,7 @@ import { ProfileDialog } from '@/components/profile-dialog';
 import { GenerationDialog } from '@/components/generation-dialog';
 import { MemoryDialog } from '@/components/memory-dialog';
 import { AdventureDialog } from '@/components/adventure-dialog';
+import { NOTE_PREFIX } from '@/core/director';
 
 interface Props {
   chatId: number;
@@ -44,9 +45,6 @@ type Streaming = {
   /** Adventure mode: the Director is still deciding what happens. */
   directing?: boolean;
 } | null;
-
-/** A message that starts like this goes to the Director only. */
-const NOTE_PREFIX = /^\s*\/d(?:\s|$)/i;
 
 type Details = { messageId: number; swipeIndex: number; swipeCount: number; meta: GenerationMeta | null };
 

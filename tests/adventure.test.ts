@@ -35,8 +35,8 @@ const net = {
   sent: [] as Sent[],
   /** Replies to non-streaming (Director) calls, in order. A string, or an HTTP status to fail with. */
   director: [] as (string | number)[],
-  /** Replies to streaming (Narrator) calls, in order. */
-  narrator: [] as string[],
+  /** Replies to streaming (Narrator) calls, in order. A string, or an HTTP status to fail with. */
+  narrator: [] as (string | number)[],
 };
 
 const realFetch = globalThis.fetch;
@@ -65,7 +65,11 @@ beforeEach(async () => {
     if (init.signal?.aborted) throw new DOMException('The user pressed Stop', 'AbortError');
     const body = JSON.parse(String(init.body)) as Sent;
     net.sent.push(body);
-    if (body.stream) return sse(net.narrator.shift() ?? 'The forest is quiet.');
+    if (body.stream) {
+      const reply = net.narrator.shift() ?? 'The forest is quiet.';
+      if (typeof reply === 'number') return new Response('{"error":{"message":"boom"}}', { status: reply });
+      return sse(reply);
+    }
     const next = net.director.shift() ?? '<direction>Nothing to add.</direction>';
     if (typeof next === 'number') return new Response('{"error":{"message":"boom"}}', { status: next });
     return Response.json({ model: body.model, choices: [{ message: { content: next }, finish_reason: 'stop' }] });
@@ -348,4 +352,44 @@ test('switching adventure mode off goes back to one request, keeping the state',
 
   assert.equal(net.sent.length, 1);
   assert.equal((await api.getAdventureState(chat.id)).text, STATE);
+});
+
+test('re-rolling the Direction starts from the state before the rejected one', async () => {
+  const chat = await startChat();
+  await api.saveAdventureState(chat.id, 'Cast:\n- Elara: your guide');
+  net.director.push('<direction>Brann attacks.</direction>\n<state>Cast:\n- Brann: an enemy, now wounded</state>');
+  await api.sendMessage(chat.id, 'I look around.');
+  const reply = await generate(chat.id, 'new', handlers());
+  await generate(chat.id, 'redirect', handlers(), reply!.id);
+
+  const rerolled = promptText(directorCalls()[1]);
+  assert.match(rerolled, /Elara: your guide/);
+  assert.doesNotMatch(rerolled, /now wounded/);
+});
+
+test('when the Narrator writes nothing, the Adventure State does not move', async () => {
+  const chat = await startChat();
+  await api.saveAdventureState(chat.id, STATE);
+  net.director.push('<direction>Brann attacks.</direction>\n<state>Cast:\n- Brann: dead</state>');
+  net.narrator.push(500);
+  await api.sendMessage(chat.id, 'I look around.');
+  await assert.rejects(generate(chat.id, 'new', handlers()));
+
+  assert.equal((await api.getAdventureState(chat.id)).text, STATE);
+});
+
+test('the newest message reaches the Director even when it is over its budget', async () => {
+  const chat = await startChat();
+  await api.saveSettings({ directorTokens: 20 });
+  await api.sendMessage(chat.id, `I tell Elara the whole story of the siege. ${'And then the walls fell. '.repeat(20)}`);
+  await generate(chat.id, 'new', handlers());
+
+  assert.match(promptText(directorCalls()[0]), /the whole story of the siege/);
+});
+
+test('the Adventure State can be cleared', async () => {
+  const chat = await startChat();
+  await api.saveAdventureState(chat.id, STATE);
+  assert.equal((await api.clearAdventureState(chat.id)).text, '');
+  assert.equal((await api.getAdventureState(chat.id)).text, '');
 });

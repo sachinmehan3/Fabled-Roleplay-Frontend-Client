@@ -95,10 +95,7 @@ export function buildPrompt(
     card.scenario && `Scenario: ${m(card.scenario)}`,
     card.mes_example && `Example dialogue (style reference only):\n${m(card.mes_example.replace(/<START>/gi, '---'))}`,
     ...loreAt('after_char'),
-    adventure.cast?.trim() && `<cast>
-Other characters in this story so far:
-${m(adventure.cast)}
-</cast>`,
+    adventure.cast?.trim() && `<cast>\nOther characters in this story so far:\n${m(adventure.cast)}\n</cast>`,
   ].filter(Boolean);
 
   const system: ChatMessage = { role: 'system', content: sections.join('\n\n') };
@@ -110,11 +107,7 @@ ${m(adventure.cast)}
   const directionMessage: ChatMessage | null = adventure.direction?.trim()
     ? {
         role: 'system',
-        content: `<direction>
-What happens in your next reply, decided by the story's director. Follow it, and write it as the story itself - never mention the director.
-
-${m(adventure.direction)}
-</direction>`,
+        content: `<direction>\nWhat happens in your next reply, decided by the story's Director. Follow it, and write it as the story itself - never mention the Director.\n\n${m(adventure.direction)}\n</direction>`,
       }
     : null;
 

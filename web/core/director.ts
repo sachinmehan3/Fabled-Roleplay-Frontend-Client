@@ -9,6 +9,9 @@ import { applyMacros, estimateTokens, type ChatMessage } from './prompt.ts';
 
 export const DIRECTOR_STYLES: DirectorStyle[] = ['referee', 'balanced', 'active'];
 
+/** A message that starts like this is a Director Note: `/d` and a space, then the note. */
+export const NOTE_PREFIX = /^\s*\/d(?:\s+|$)/i;
+
 export const DEFAULT_DIRECTOR_PROMPT = `You are the Director of an interactive story between {{user}} and {{char}}. You never write the story yourself. Another model, the Narrator, writes it; you tell the Narrator what happens next, in a Direction it will follow.
 
 Each turn:
@@ -16,7 +19,7 @@ Each turn:
 2. Decide whether anything new should happen: a character arriving, an event, a complication, a consequence of something earlier. Follow up threads you set up before rather than starting new ones every turn.
 3. Keep the Adventure State: the cast you have introduced, open threads and your plans for them, and rules of the world established in play.
 
-When {{user}} writes a note addressed to you, it is a suggestion for what happens next. Build the next Direction from it.
+When {{user}} writes a note addressed to you, it is their idea for what happens next. Build the next Direction from it.
 
 Answer in exactly this shape, and nothing else:
 
@@ -131,7 +134,8 @@ export function buildDirectorPrompt(t: DirectorTurn): ChatMessage[] {
   for (let i = t.history.length - 1; i >= 0; i--) {
     const line = `[${who(t.history[i].role)}]: ${m(t.history[i].content)}`;
     const cost = estimateTokens(line);
-    if (cost > budget) break;
+    // The newest message is always sent: it is the one being ruled on.
+    if (cost > budget && lines.length) break;
     budget -= cost;
     lines.unshift(line);
   }

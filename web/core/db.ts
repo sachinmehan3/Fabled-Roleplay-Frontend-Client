@@ -50,6 +50,7 @@ export interface RecordRow {
   prompt?: PromptMessage[];
   reasoning?: string;
   direction?: string;
+  stateBefore?: string;
 }
 
 export interface ImageRow {
@@ -361,6 +362,11 @@ export async function saveAdventureState(chatId: number, text: string) {
   await (await db()).put('adventure', { chat_id: chatId, text, updatedAt: Date.now() });
 }
 
+export async function clearAdventureState(chatId: number): Promise<AdventureState> {
+  await (await db()).delete('adventure', chatId);
+  return getAdventureState(chatId);
+}
+
 // ---------- lorebooks ----------
 
 export async function listLorebooks(): Promise<Lorebook[]> {
@@ -407,22 +413,22 @@ export async function saveLoreState(chatId: number, state: LoreState) {
 export async function getRecord(
   messageId: number,
   swipe: number,
-): Promise<Pick<RecordRow, 'prompt' | 'reasoning' | 'direction'> | undefined> {
+): Promise<Pick<RecordRow, 'prompt' | 'reasoning' | 'direction' | 'stateBefore'> | undefined> {
   const row = await (await db()).get('records', [messageId, swipe]);
-  return row && { prompt: row.prompt, reasoning: row.reasoning, direction: row.direction };
+  return row && { prompt: row.prompt, reasoning: row.reasoning, direction: row.direction, stateBefore: row.stateBefore };
 }
 
 /** The meta as it is kept on the message: everything except the bulky fields. */
 function withoutBulk(meta: GenerationMeta | null | undefined): GenerationMeta | null {
   if (!meta) return null;
-  const { prompt: _prompt, reasoning: _reasoning, direction: _direction, ...rest } = meta;
+  const { prompt: _prompt, reasoning: _reasoning, direction: _direction, stateBefore: _stateBefore, ...rest } = meta;
   return rest;
 }
 
 /** The bulky fields of a meta, or null when it has none to keep. */
 function recordOf(meta: GenerationMeta | null | undefined) {
-  if (!meta?.prompt && !meta?.reasoning && !meta?.direction) return null;
-  return { prompt: meta.prompt, reasoning: meta.reasoning, direction: meta.direction };
+  if (!meta?.prompt && !meta?.reasoning && !meta?.direction && meta?.stateBefore === undefined) return null;
+  return { prompt: meta.prompt, reasoning: meta.reasoning, direction: meta.direction, stateBefore: meta.stateBefore };
 }
 
 // ---------- messages ----------

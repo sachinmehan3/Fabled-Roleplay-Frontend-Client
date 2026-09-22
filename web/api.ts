@@ -24,7 +24,7 @@ import { importLorebook as parseLorebook } from './core/lorebook-import.ts';
 import { isPng, normalizeCard, parseCardFile } from './core/cards.ts';
 import { chubCardUrl, chubPath } from './core/chub.ts';
 import { applyMacros, buildPrompt, estimateTokens, type Adventure } from './core/prompt.ts';
-import { buildDirectorPrompt, castOf, DIRECTOR_STYLES, parseDirectorReply } from './core/director.ts';
+import { buildDirectorPrompt, castOf, DIRECTOR_STYLES, NOTE_PREFIX, parseDirectorReply } from './core/director.ts';
 import { postProcess } from './core/post-process.ts';
 import { completeChat, describeImage, listModels, streamChat, testChat, type StreamReport } from './core/llm.ts';
 import starterCard from '../samples/sable.card.json' with { type: 'json' };
@@ -68,9 +68,6 @@ const requireCharacter = async (id: number) => required(await db.getCharacter(id
 const requireChat = async (id: number) => required(await db.getChat(id), 'Chat');
 const requireLorebook = async (id: number) => required(await db.getLorebook(id), 'Lorebook');
 const requireMessage = async (id: number) => required(await db.getMessage(id), 'Message');
-
-/** A message starting with this goes to the Director only. */
-const NOTE_PREFIX = /^\/d(?:\s+|$)/i;
 
 function characterOut(row: CharacterRow, counts: Record<number, number>): Character {
   return {
@@ -426,6 +423,8 @@ export const api = {
     return db.getAdventureState(chatId);
   },
 
+  clearAdventureState: (chatId: number): Promise<AdventureState> => db.clearAdventureState(chatId),
+
   // ---------- lorebooks ----------
 
   listLorebooks: () => db.listLorebooks(),
@@ -490,10 +489,10 @@ export const api = {
   sendMessage: async (chatId: number, content: string): Promise<Message> => {
     if (!content.trim()) throw new Error('Empty message');
     const chat = await requireChat(chatId);
-    const note = NOTE_PREFIX.exec(content.trimStart());
+    const note = NOTE_PREFIX.exec(content);
     if (note) {
       if (!chat.adventure) throw new Error('Adventure mode is off');
-      const text = content.trimStart().slice(note[0].length);
+      const text = content.slice(note[0].length);
       if (!text.trim()) throw new Error('Empty message');
       return db.insertMessage(chatId, 'note', [text]);
     }
@@ -607,6 +606,7 @@ export async function generate(
 
   let all = await db.listMessages(chat.id);
   let target: Message | undefined;
+  let targetIsLatest = false;
   const impersonate = mode === 'impersonate';
   const rewrites = mode !== 'new' && !(impersonate && messageId === undefined);
   const replace = mode === 'redo' || (impersonate && rewrites);
@@ -618,6 +618,7 @@ export async function generate(
     if (!target || target.role !== wanted) {
       throw new Error(impersonate ? 'Only your own message can be written for you' : 'Only a reply can be regenerated');
     }
+    targetIsLatest = at === all.length - 1;
     all = all.slice(0, at);
   }
 
@@ -639,8 +640,16 @@ export async function generate(
 
   const adventure: Adventure = {};
   let directed: Partial<GenerationMeta> = {};
+  /** The Adventure State this turn leads to, saved only once there is a reply to go with it. */
+  let nextState: string | undefined;
   if (chat.adventure && !impersonate) {
-    const state = await db.getAdventureState(chat.id);
+    const current = await db.getAdventureState(chat.id);
+    let state = current;
+    if (mode === 'redirect' && target && targetIsLatest) {
+      // The rejected Direction's changes to the state are undone along with it.
+      const before = (await db.getRecord(target.id, target.swipe_index))?.stateBefore;
+      if (before !== undefined) state = { ...current, text: before };
+    }
     adventure.cast = castOf(state.text);
     if (target && (mode === 'swipe' || mode === 'redo')) {
       // A new version rewrites the prose, not what happened.
@@ -675,12 +684,13 @@ export async function generate(
         );
         const reply = parseDirectorReply(result.reply);
         if (!reply) throw new Error('the Director answered without a <direction>');
-        if (reply.state !== undefined) {
-          await db.saveAdventureState(chat.id, reply.state);
-          adventure.cast = castOf(reply.state);
-        }
         adventure.direction = reply.direction;
         directed = { direction: reply.direction, directorModel, directorMs: Date.now() - started, directorUsage: result.usage };
+        nextState = reply.state ?? (state.text !== current.text ? state.text : undefined);
+        if (nextState !== undefined) {
+          adventure.cast = castOf(nextState);
+          directed.stateBefore = state.text; // so a re-roll can start from here again
+        }
       } catch (e) {
         if (signal.aborted) return undefined; // Stop, before a word was written
         const reason = (e as Error).message;
@@ -782,6 +792,8 @@ export async function generate(
       saved = await db.insertMessage(chat.id, impersonate ? 'user' : 'assistant', [text], [meta]);
     }
   }
+  // Only a reply that exists moves the adventure on; a failed one leaves it where it was.
+  if (saved && nextState !== undefined) await db.saveAdventureState(chat.id, nextState);
 
   // Remember whatever just fell out of the window, in the background, so a slow
   // or failing summariser never delays the roleplay.

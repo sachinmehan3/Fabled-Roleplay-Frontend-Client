@@ -179,6 +179,11 @@ export interface GenerationMeta {
    * present on a record fetched with api.getMessageMeta().
    */
   direction?: string;
+  /**
+   * The Adventure State before this version's Direction changed it, kept so a
+   * re-roll can start from there. Only on a record fetched with api.getMessageMeta().
+   */
+  stateBefore?: string;
   /** True when the Direction was carried over from the version this one replaces or sits beside. */
   directionReused?: boolean;
   directorModel?: string;

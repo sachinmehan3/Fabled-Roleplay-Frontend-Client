@@ -132,6 +132,19 @@ export function AdventureDialog({ open, onOpenChange, chat, onChatChanged }: Pro
         </div>
 
         <DialogFooter className="border-t px-6 py-4">
+          <Button
+            variant="ghost"
+            className="sm:mr-auto"
+            disabled={loading || saving || !state}
+            onClick={() =>
+              api
+                .clearAdventureState(chat.id)
+                .then((s) => setState(s.text))
+                .catch((e: Error) => toast.error(e.message))
+            }
+          >
+            Clear state
+          </Button>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
