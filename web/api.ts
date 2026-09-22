@@ -3,11 +3,13 @@
 // There is no server: data lives in IndexedDB (core/db.ts) and generation goes
 // straight from this tab to the provider the user chose, with their own key.
 import type {
+  AdventureState,
   Character,
   CharacterCard,
   Chat,
   ChatMemory,
   ConnectionTest,
+  DirectorStyle,
   GenerationMeta,
   Lorebook,
   Message,
@@ -21,10 +23,11 @@ import { activateLore, EMPTY_ENTRY } from './core/lorebook.ts';
 import { importLorebook as parseLorebook } from './core/lorebook-import.ts';
 import { isPng, normalizeCard, parseCardFile } from './core/cards.ts';
 import { chubCardUrl, chubPath } from './core/chub.ts';
-import { applyMacros, buildPrompt, estimateTokens } from './core/prompt.ts';
+import { applyMacros, buildPrompt, estimateTokens, type Adventure } from './core/prompt.ts';
+import { buildDirectorPrompt, castOf, DIRECTOR_STYLES, parseDirectorReply } from './core/director.ts';
 import { postProcess } from './core/post-process.ts';
-import { describeImage, listModels, streamChat, testChat, type StreamReport } from './core/llm.ts';
-import starterCard from '../samples/sable.card.json';
+import { completeChat, describeImage, listModels, streamChat, testChat, type StreamReport } from './core/llm.ts';
+import starterCard from '../samples/sable.card.json' with { type: 'json' };
 
 const MAX_UPLOAD = 20 * 1024 * 1024;
 const TOO_LARGE = 'That file is too large (20 MB at most).';
@@ -65,6 +68,9 @@ const requireCharacter = async (id: number) => required(await db.getCharacter(id
 const requireChat = async (id: number) => required(await db.getChat(id), 'Chat');
 const requireLorebook = async (id: number) => required(await db.getLorebook(id), 'Lorebook');
 const requireMessage = async (id: number) => required(await db.getMessage(id), 'Message');
+
+/** A message starting with this goes to the Director only. */
+const NOTE_PREFIX = /^\/d(?:\s+|$)/i;
 
 function characterOut(row: CharacterRow, counts: Record<number, number>): Character {
   return {
@@ -370,6 +376,7 @@ export const api = {
       chat.title.trim() ? `${chat.title} (branched)` : '',
       Date.now(),
       chat.id,
+      { adventure: chat.adventure, directorStyle: chat.directorStyle },
     );
 
     // Copy the messages, carrying their prompts and thinking across so the
@@ -389,9 +396,32 @@ export const api = {
       const covered = [...newIdOf.entries()].filter(([old]) => old <= memory.coveredThrough).map(([, id]) => id);
       await db.saveMemory(branch.id, { ...memory, coveredThrough: covered.length ? Math.max(...covered) : 0 });
     }
+    // The same adventure carries on in the branch.
+    const state = await db.getAdventureState(chat.id);
+    if (state.text.trim()) await db.saveAdventureState(branch.id, state.text);
     // Lorebook timers are counted in messages, so they would be wrong here. The
     // branch starts with none and they re-establish themselves as it goes.
     return requireChat(branch.id);
+  },
+
+  // ---------- adventure mode ----------
+
+  /** Switch adventure mode on or off for a chat, or change its Director Style. */
+  updateAdventure: async (chatId: number, patch: { adventure?: boolean; directorStyle?: DirectorStyle }) => {
+    await requireChat(chatId);
+    const next: { adventure?: boolean; directorStyle?: DirectorStyle } = {};
+    if (typeof patch.adventure === 'boolean') next.adventure = patch.adventure;
+    if (patch.directorStyle && DIRECTOR_STYLES.includes(patch.directorStyle)) next.directorStyle = patch.directorStyle;
+    await db.updateChat(chatId, next);
+    return requireChat(chatId);
+  },
+
+  getAdventureState: (chatId: number): Promise<AdventureState> => db.getAdventureState(chatId),
+
+  saveAdventureState: async (chatId: number, text: string): Promise<AdventureState> => {
+    await requireChat(chatId);
+    await db.saveAdventureState(chatId, text);
+    return db.getAdventureState(chatId);
   },
 
   // ---------- lorebooks ----------
@@ -454,9 +484,17 @@ export const api = {
 
   listMessages: (chatId: number): Promise<Message[]> => db.listMessages(chatId),
 
+  /** Your next message, or a Director Note when it starts with `/d `. */
   sendMessage: async (chatId: number, content: string): Promise<Message> => {
     if (!content.trim()) throw new Error('Empty message');
-    await requireChat(chatId);
+    const chat = await requireChat(chatId);
+    const note = NOTE_PREFIX.exec(content.trimStart());
+    if (note) {
+      if (!chat.adventure) throw new Error('Adventure mode is off');
+      const text = content.trimStart().slice(note[0].length);
+      if (!text.trim()) throw new Error('Empty message');
+      return db.insertMessage(chatId, 'note', [text]);
+    }
     return db.insertMessage(chatId, 'user', [content]);
   },
 
@@ -533,6 +571,8 @@ export const api = {
 export interface StreamHandlers {
   onDelta: (text: string) => void;
   onReasoning?: (text: string) => void;
+  /** In adventure mode: the Director is deciding, or the Narrator is writing. */
+  onPhase?: (phase: 'director' | 'narrator') => void;
   signal: AbortSignal;
 }
 
@@ -543,14 +583,19 @@ export interface StreamHandlers {
  *   swipe:       add a version to a reply (the last, or `messageId`)
  *   redo:        replace a reply, versions and all
  *   impersonate: write your next message, or rewrite `messageId` if it is yours
+ *   redirect:    add a version to a reply with a fresh Direction (adventure mode)
+ *
+ * In adventure mode the Director decides what happens before the Narrator
+ * writes: for new replies and redirects it is asked afresh, while swipe and
+ * redo keep the Direction of the version they rewrite.
  *
  * Every mode but 'new' writes from what came before the target, and leaves
  * anything after it alone. Stopping keeps whatever arrived.
  */
 export async function generate(
   chatId: number,
-  mode: 'new' | 'swipe' | 'redo' | 'impersonate',
-  { onDelta, onReasoning, signal }: StreamHandlers,
+  mode: 'new' | 'swipe' | 'redo' | 'impersonate' | 'redirect',
+  { onDelta, onReasoning, onPhase, signal }: StreamHandlers,
   messageId?: number,
 ): Promise<Message | undefined> {
   const chat = await requireChat(chatId);
@@ -567,14 +612,16 @@ export async function generate(
     const at = typeof messageId === 'number' ? all.findIndex((m) => m.id === messageId) : all.length - 1;
     if (at < 0) throw new Error('That message is not in this chat');
     target = all[at];
-    const wanted = impersonate ? 'user' : 'assistant';
+    const wanted = impersonate ? 'user' : 'assistant'; // Director Notes are never rewritten
     if (!target || target.role !== wanted) {
       throw new Error(impersonate ? 'Only your own message can be written for you' : 'Only a reply can be regenerated');
     }
     all = all.slice(0, at);
   }
 
-  const history = all.map((m) => ({ role: m.role, content: m.swipes[m.swipe_index] ?? '' }));
+  // Director Notes are for the Director alone; the story is everything else.
+  const story = all.filter((m) => m.role !== 'note');
+  const history = story.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.swipes[m.swipe_index] ?? '' }));
 
   // Lorebooks look at the conversation and decide what the model needs to know.
   const lore = activateLore({
@@ -586,7 +633,64 @@ export async function generate(
   });
   await db.saveLoreState(chat.id, lore.state); // sticky and cooldown are remembered per chat
 
-  const built = buildPrompt(character.card, settings, history, await db.getMemory(chat.id), lore.entries);
+  const memory = await db.getMemory(chat.id);
+
+  const adventure: Adventure = {};
+  let directed: Partial<GenerationMeta> = {};
+  if (chat.adventure && !impersonate) {
+    const state = await db.getAdventureState(chat.id);
+    adventure.cast = castOf(state.text);
+    if (target && (mode === 'swipe' || mode === 'redo')) {
+      // A new version rewrites the prose, not what happened.
+      const direction = (await db.getRecord(target.id, target.swipe_index))?.direction;
+      if (direction) {
+        adventure.direction = direction;
+        directed = { direction, directionReused: true };
+      }
+    } else {
+      onPhase?.('director');
+      const directorModel = settings.directorModel.trim() || settings.model;
+      const started = Date.now();
+      try {
+        const recentDirections: string[] = [];
+        for (const m of all.filter((x) => x.role === 'assistant').slice(-3)) {
+          const direction = (await db.getRecord(m.id, m.swipe_index))?.direction;
+          if (direction) recentDirections.push(direction);
+        }
+        const result = await completeChat(
+          { ...settings, model: directorModel },
+          buildDirectorPrompt({
+            card: character.card,
+            settings,
+            style: chat.directorStyle ?? 'balanced',
+            state,
+            memory,
+            lore: lore.entries.map((l) => l.entry.content),
+            history: all.map((m) => ({ role: m.role, content: m.swipes[m.swipe_index] ?? '' })),
+            recentDirections,
+          }),
+          { maxTokens: 1000, temperature: settings.directorTemperature, timeoutMs: 90_000, signal },
+        );
+        const reply = parseDirectorReply(result.reply);
+        if (!reply) throw new Error('the Director answered without a <direction>');
+        if (reply.state !== undefined) {
+          await db.saveAdventureState(chat.id, reply.state);
+          adventure.cast = castOf(reply.state);
+        }
+        adventure.direction = reply.direction;
+        directed = { direction: reply.direction, directorModel, directorMs: Date.now() - started, directorUsage: result.usage };
+      } catch (e) {
+        if (signal.aborted) return undefined; // Stop, before a word was written
+        const reason = (e as Error).message;
+        // A note means nothing without the Director, so say so rather than carry on.
+        if (all.at(-1)?.role === 'note') throw new Error(`The Director could not answer your note: ${reason}`);
+        directed = { directorModel, directorMs: Date.now() - started, directorError: reason };
+      }
+    }
+    onPhase?.('narrator');
+  }
+
+  const built = buildPrompt(character.card, settings, history, memory, lore.entries, adventure);
   // Asking for the other half of the conversation: same prompt, a last word on
   // whose turn it is.
   if (impersonate) {
@@ -658,6 +762,7 @@ export async function generate(
     estimatedCompletionTokens: estimateTokens(text),
     msToFirstToken: firstTokenAt && firstTokenAt - startedAt,
     msTotal: Date.now() - startedAt,
+    ...directed,
   };
 
   // Save whatever we got, including partial output after Stop.
@@ -678,8 +783,8 @@ export async function generate(
 
   // Remember whatever just fell out of the window, in the background, so a slow
   // or failing summariser never delays the roleplay.
-  if (settings.memoryTokens > 0 && built.usedHistory < all.length) {
-    const forgotten = all.slice(0, all.length - built.usedHistory);
+  if (settings.memoryTokens > 0 && built.usedHistory < story.length) {
+    const forgotten = story.slice(0, story.length - built.usedHistory);
     foldMemory(chat.id, character.card, settings, forgotten).catch((e: Error) =>
       console.error(`Memory fold failed for chat ${chat.id}:`, e.message),
     );

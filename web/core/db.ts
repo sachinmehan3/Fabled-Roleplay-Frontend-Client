@@ -7,6 +7,7 @@
 //   records     prompt and reasoning per swipe (key: [message_id, swipe])
 //   memory      rolling summary per chat
 //   lore_state  sticky and cooldown timers per chat
+//   adventure   the Director's Adventure State per chat
 //   lorebooks   books and their entries
 //   images      picture bytes, by random id
 //
@@ -14,19 +15,21 @@
 // keep, and messages are read whenever a chat opens.
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import type {
+  AdventureState,
   CharacterCard,
   Chat,
   ChatMemory,
   GenerationMeta,
   Lorebook,
   Message,
+  MessageRole,
   PromptMessage,
   Settings,
 } from '../types.ts';
 import type { LoreState } from './lorebook.ts';
 
 const DB_NAME = 'fabled';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export interface CharacterRow {
   id: number;
@@ -46,6 +49,7 @@ export interface RecordRow {
   chat_id: number;
   prompt?: PromptMessage[];
   reasoning?: string;
+  direction?: string;
 }
 
 export interface ImageRow {
@@ -62,18 +66,44 @@ interface FabledDB extends DBSchema {
   records: { key: [number, number]; value: RecordRow; indexes: { message_id: number; chat_id: number } };
   memory: { key: number; value: ChatMemory & { chat_id: number } };
   lore_state: { key: number; value: { chat_id: number; state: LoreState } };
+  adventure: { key: number; value: AdventureState & { chat_id: number } };
   lorebooks: { key: number; value: Lorebook };
   images: { key: string; value: ImageRow };
 }
 
-type StoreName = 'kv' | 'characters' | 'chats' | 'messages' | 'records' | 'memory' | 'lore_state' | 'lorebooks' | 'images';
-const STORES: StoreName[] = ['kv', 'characters', 'chats', 'messages', 'records', 'memory', 'lore_state', 'lorebooks', 'images'];
+type StoreName =
+  | 'kv'
+  | 'characters'
+  | 'chats'
+  | 'messages'
+  | 'records'
+  | 'memory'
+  | 'lore_state'
+  | 'adventure'
+  | 'lorebooks'
+  | 'images';
+const STORES: StoreName[] = [
+  'kv',
+  'characters',
+  'chats',
+  'messages',
+  'records',
+  'memory',
+  'lore_state',
+  'adventure',
+  'lorebooks',
+  'images',
+];
+/** Everything that belongs to one chat. */
+const CHAT_STORES: StoreName[] = ['chats', 'messages', 'records', 'memory', 'lore_state', 'adventure'];
 
 let opening: Promise<IDBPDatabase<FabledDB>> | null = null;
 
 export function db(): Promise<IDBPDatabase<FabledDB>> {
   opening ??= openDB<FabledDB>(DB_NAME, DB_VERSION, {
-    upgrade(d) {
+    upgrade(d, oldVersion) {
+      if (oldVersion < 2) d.createObjectStore('adventure', { keyPath: 'chat_id' });
+      if (oldVersion >= 1) return;
       d.createObjectStore('kv');
       d.createObjectStore('characters', { keyPath: 'id', autoIncrement: true });
       d.createObjectStore('chats', { keyPath: 'id', autoIncrement: true }).createIndex('character_id', 'character_id');
@@ -130,6 +160,10 @@ export const DEFAULT_SETTINGS: Settings = {
   chatBackground: '',
   chatBackgroundDim: 60,
   spriteMode: false,
+  directorModel: '',
+  directorTemperature: 0.4,
+  directorTokens: 4000,
+  directorPrompt: '',
   apiKey: '',
 };
 
@@ -204,7 +238,7 @@ export async function updateCharacter(
 export async function deleteCharacter(id: number) {
   const d = await db();
   const chatIds = await d.getAllKeysFromIndex('chats', 'character_id', id);
-  const tx = d.transaction(['characters', 'chats', 'messages', 'records', 'memory', 'lore_state'], 'readwrite');
+  const tx = d.transaction(['characters', ...CHAT_STORES], 'readwrite');
   await tx.objectStore('characters').delete(id);
   for (const chatId of chatIds) await dropChat(tx as unknown as ChatTx, chatId);
   await tx.done;
@@ -223,6 +257,7 @@ async function dropChat(tx: ChatTx, chatId: number) {
   for (const key of await records.index('chat_id').getAllKeys(chatId)) await records.delete(key);
   await tx.objectStore('memory').delete(chatId);
   await tx.objectStore('lore_state').delete(chatId);
+  await tx.objectStore('adventure').delete(chatId);
 }
 
 async function withCount(chat: ChatRow): Promise<Chat> {
@@ -266,12 +301,14 @@ export async function insertChat(
   title: string,
   createdAt = Date.now(),
   branchedFrom?: number,
+  extra: Pick<ChatRow, 'adventure' | 'directorStyle'> = {},
 ): Promise<Chat> {
   const row = {
     character_id: characterId,
     title,
     created_at: createdAt,
     ...(branchedFrom ? { branched_from: branchedFrom } : {}),
+    ...extra,
   };
   const id = await (await db()).add('chats', row as ChatRow);
   return { ...row, id, message_count: 0 };
@@ -279,7 +316,7 @@ export async function insertChat(
 
 export async function deleteChat(id: number) {
   const d = await db();
-  const tx = d.transaction(['chats', 'messages', 'records', 'memory', 'lore_state'], 'readwrite');
+  const tx = d.transaction(CHAT_STORES, 'readwrite');
   await dropChat(tx as unknown as ChatTx, id);
   await tx.done;
 }
@@ -308,6 +345,20 @@ export async function saveMemory(chatId: number, memory: ChatMemory) {
 export async function clearMemory(chatId: number): Promise<ChatMemory> {
   await (await db()).delete('memory', chatId);
   return getMemory(chatId);
+}
+
+// ---------- adventure state ----------
+
+export async function getAdventureState(chatId: number): Promise<AdventureState> {
+  const saved: Partial<AdventureState> = (await (await db()).get('adventure', chatId)) ?? {};
+  return {
+    text: typeof saved.text === 'string' ? saved.text : '',
+    updatedAt: typeof saved.updatedAt === 'number' ? saved.updatedAt : 0,
+  };
+}
+
+export async function saveAdventureState(chatId: number, text: string) {
+  await (await db()).put('adventure', { chat_id: chatId, text, updatedAt: Date.now() });
 }
 
 // ---------- lorebooks ----------
@@ -356,16 +407,22 @@ export async function saveLoreState(chatId: number, state: LoreState) {
 export async function getRecord(
   messageId: number,
   swipe: number,
-): Promise<Pick<RecordRow, 'prompt' | 'reasoning'> | undefined> {
+): Promise<Pick<RecordRow, 'prompt' | 'reasoning' | 'direction'> | undefined> {
   const row = await (await db()).get('records', [messageId, swipe]);
-  return row && { prompt: row.prompt, reasoning: row.reasoning };
+  return row && { prompt: row.prompt, reasoning: row.reasoning, direction: row.direction };
 }
 
 /** The meta as it is kept on the message: everything except the bulky fields. */
 function withoutBulk(meta: GenerationMeta | null | undefined): GenerationMeta | null {
   if (!meta) return null;
-  const { prompt: _prompt, reasoning: _reasoning, ...rest } = meta;
+  const { prompt: _prompt, reasoning: _reasoning, direction: _direction, ...rest } = meta;
   return rest;
+}
+
+/** The bulky fields of a meta, or null when it has none to keep. */
+function recordOf(meta: GenerationMeta | null | undefined) {
+  if (!meta?.prompt && !meta?.reasoning && !meta?.direction) return null;
+  return { prompt: meta.prompt, reasoning: meta.reasoning, direction: meta.direction };
 }
 
 // ---------- messages ----------
@@ -387,7 +444,7 @@ export async function getMessage(id: number): Promise<Message | undefined> {
 
 export async function insertMessage(
   chatId: number,
-  role: 'user' | 'assistant',
+  role: MessageRole,
   swipes: string[],
   meta: (GenerationMeta | null)[] = [],
   createdAt = Date.now(),
@@ -405,9 +462,8 @@ export async function insertMessage(
   };
   const id = await tx.objectStore('messages').add(row as Message);
   for (const [i, m] of meta.entries()) {
-    if (m?.prompt || m?.reasoning) {
-      await tx.objectStore('records').put({ message_id: id, swipe: i, chat_id: chatId, prompt: m.prompt, reasoning: m.reasoning });
-    }
+    const record = recordOf(m);
+    if (record) await tx.objectStore('records').put({ message_id: id, swipe: i, chat_id: chatId, ...record });
   }
   await tx.done;
   return alignMeta({ ...row, id });
@@ -430,9 +486,8 @@ export async function saveSwipes(id: number, swipes: string[], meta: (Generation
     if (key[1] >= swipes.length) await records.delete(key); // swipes that no longer exist
   }
   for (const [i, m] of meta.entries()) {
-    if (m?.prompt || m?.reasoning) {
-      await records.put({ message_id: id, swipe: i, chat_id: row.chat_id, prompt: m.prompt, reasoning: m.reasoning });
-    }
+    const record = recordOf(m);
+    if (record) await records.put({ message_id: id, swipe: i, chat_id: row.chat_id, ...record });
   }
   await tx.done;
 }
@@ -492,6 +547,8 @@ export interface Backup {
   records: RecordRow[];
   memory: (ChatMemory & { chat_id: number })[];
   lore_state: { chat_id: number; state: LoreState }[];
+  /** Missing from backups made before adventure mode. */
+  adventure?: (AdventureState & { chat_id: number })[];
   lorebooks: Lorebook[];
   images: { id: string; type: string; base64: string }[];
 }
@@ -526,6 +583,7 @@ export async function exportBackup({ includeApiKey = false } = {}): Promise<Back
     records: await d.getAll('records'),
     memory: await d.getAll('memory'),
     lore_state: await d.getAll('lore_state'),
+    adventure: await d.getAll('adventure'),
     lorebooks: await d.getAll('lorebooks'),
     images: (await d.getAll('images')).map((img) => ({ id: img.id, type: img.type, base64: toBase64(img.data) })),
   };
@@ -556,6 +614,7 @@ export async function importBackup(raw: unknown) {
   for (const row of list(b.records)) await tx.objectStore('records').put(row);
   for (const row of list(b.memory)) await tx.objectStore('memory').put(row);
   for (const row of list(b.lore_state)) await tx.objectStore('lore_state').put(row);
+  for (const row of list(b.adventure)) await tx.objectStore('adventure').put(row);
   for (const row of list(b.lorebooks)) await tx.objectStore('lorebooks').put(row);
   for (const img of list(b.images)) {
     await tx.objectStore('images').put({ id: img.id, type: img.type, data: fromBase64(img.base64) });

@@ -69,7 +69,10 @@ export async function foldMemory(
   if (inFlight.has(chatId)) return null;
 
   const current = await getMemory(chatId);
-  const fresh = messages.filter((m) => m.id > current.coveredThrough && (m.swipes[m.swipe_index] ?? '').trim());
+  // Director Notes are not part of the story as told, so they are never remembered.
+  const fresh = messages.filter(
+    (m) => m.role !== 'note' && m.id > current.coveredThrough && (m.swipes[m.swipe_index] ?? '').trim(),
+  );
   if (!fresh.length) return null;
 
   inFlight.add(chatId);

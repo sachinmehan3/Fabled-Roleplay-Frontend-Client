@@ -263,12 +263,13 @@ export interface ConnectionTest {
 export async function completeChat(
   settings: Settings,
   messages: ChatMessage[],
-  opts: { maxTokens: number; temperature: number; timeoutMs?: number },
+  opts: { maxTokens: number; temperature: number; timeoutMs?: number; signal?: AbortSignal },
 ): Promise<ConnectionTest> {
+  const timeout = AbortSignal.timeout(opts.timeoutMs ?? 20_000); // never hang forever
   const res = await request(`${baseUrl(settings)}/chat/completions`, {
     method: 'POST',
     headers: headers(settings),
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 20_000), // never hang forever
+    signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
     body: JSON.stringify({
       model: settings.model,
       messages,

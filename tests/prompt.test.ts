@@ -22,6 +22,10 @@ const settings = (over: Partial<Settings> = {}): Settings => ({
   chatBackground: '',
   chatBackgroundDim: 60,
   spriteMode: false,
+  directorModel: '',
+  directorTemperature: 0.4,
+  directorTokens: 4000,
+  directorPrompt: '',
   ...over,
 });
 

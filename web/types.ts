@@ -38,6 +38,18 @@ export interface Chat {
   created_at: number;
   message_count?: number;
   branched_from?: number;
+  /** Adventure mode: the Director decides what happens, the Narrator writes it. */
+  adventure?: boolean;
+  directorStyle?: DirectorStyle;
+}
+
+/** How much the Director intervenes. */
+export type DirectorStyle = 'referee' | 'balanced' | 'active';
+
+/** The Director's notes on an adventure: cast, open threads and plans, world rules. */
+export interface AdventureState {
+  text: string;
+  updatedAt: number;
 }
 
 export interface VisionCheck {
@@ -161,12 +173,31 @@ export interface GenerationMeta {
   estimatedCompletionTokens: number;
   msToFirstToken?: number;
   msTotal: number;
+
+  /**
+   * The Director's instructions for this reply, in adventure mode. Only
+   * present on a record fetched with api.getMessageMeta().
+   */
+  direction?: string;
+  /** True when the Direction was carried over from the version this one replaces or sits beside. */
+  directionReused?: boolean;
+  directorModel?: string;
+  directorMs?: number;
+  directorUsage?: TokenUsage;
+  /** Why the Director could not answer; the reply was written without a Direction. */
+  directorError?: string;
 }
+
+/**
+ * Who a message is from. A `note` is a Director Note: from the user, to the
+ * Director only, and never shown to the Narrator.
+ */
+export type MessageRole = 'user' | 'assistant' | 'note';
 
 export interface Message {
   id: number;
   chat_id: number;
-  role: 'user' | 'assistant';
+  role: MessageRole;
   swipes: string[];
   /** Parallel to swipes; null for greetings and anything not generated here. */
   meta: (GenerationMeta | null)[];
@@ -195,6 +226,13 @@ export interface Settings {
   chatBackgroundDim: number;
   /** Show the character's sprite large, with the chat in a panel below it. */
   spriteMode: boolean;
+  /** The Director's model; blank means the Narrator's. */
+  directorModel: string;
+  directorTemperature: number;
+  /** Context the Director gets for recent history. */
+  directorTokens: number;
+  /** The Director's instructions; blank means the built-in ones. */
+  directorPrompt: string;
   /** Kept in this browser only, and sent nowhere but the provider. */
   apiKey: string;
 }

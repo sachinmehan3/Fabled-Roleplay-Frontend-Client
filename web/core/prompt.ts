@@ -56,12 +56,21 @@ function memoryBlock(memory: ChatMemory | undefined, budget: number, m: (t: stri
   return text ? wrap(text) : null; // no room to say anything at all
 }
 
+/** What the Narrator is told in adventure mode. */
+export interface Adventure {
+  /** The cast section of the Adventure State. */
+  cast?: string;
+  /** The Director's instructions for this reply. */
+  direction?: string;
+}
+
 export function buildPrompt(
   card: CharacterCard,
   settings: Settings,
   history: { role: 'user' | 'assistant'; content: string }[],
   memory?: ChatMemory,
   lore: ActivatedEntry[] = [],
+  adventure: Adventure = {},
 ): BuiltPrompt {
   const m = (t: string) => applyMacros(t, card.name, settings.userName).trim();
 
@@ -86,11 +95,27 @@ export function buildPrompt(
     card.scenario && `Scenario: ${m(card.scenario)}`,
     card.mes_example && `Example dialogue (style reference only):\n${m(card.mes_example.replace(/<START>/gi, '---'))}`,
     ...loreAt('after_char'),
+    adventure.cast?.trim() && `<cast>
+Other characters in this story so far:
+${m(adventure.cast)}
+</cast>`,
   ].filter(Boolean);
 
   const system: ChatMessage = { role: 'system', content: sections.join('\n\n') };
   const postHistory: ChatMessage | null = card.post_history_instructions
     ? { role: 'system', content: m(card.post_history_instructions) }
+    : null;
+
+  // Late in the prompt, where the model weighs it most.
+  const directionMessage: ChatMessage | null = adventure.direction?.trim()
+    ? {
+        role: 'system',
+        content: `<direction>
+What happens in your next reply, decided by the story's director. Follow it, and write it as the story itself - never mention the director.
+
+${m(adventure.direction)}
+</direction>`,
+      }
     : null;
 
   // Memory is paid for out of the context before history gets any, so a long
@@ -107,6 +132,7 @@ export function buildPrompt(
     settings.maxTokens -
     estimateTokens(system.content) -
     (postHistory ? estimateTokens(postHistory.content) : 0) -
+    (directionMessage ? estimateTokens(directionMessage.content) : 0) -
     memoryTokens -
     depthMessages.reduce((n, x) => n + estimateTokens(x.content), 0);
   let budget = historyBudget;
@@ -132,6 +158,7 @@ export function buildPrompt(
     system,
     ...(memoryMessage ? [memoryMessage] : []),
     ...withDepth,
+    ...(directionMessage ? [directionMessage] : []),
     ...(postHistory ? [postHistory] : []),
   ];
   const estimatedTokens = messages.reduce((n, x) => n + estimateTokens(x.content), 0);
