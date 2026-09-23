@@ -2,6 +2,10 @@
 
 A minimal roleplay chat frontend in the spirit of SillyTavern: streaming chat with any OpenAI-compatible API, Tavern character cards (PNG/JSON, import from Chub), lorebooks, swipes, branching, chat memory, and more. It's local-first and runs entirely in the browser as static files - no server, no accounts. Everything (characters, chats, settings, your API key) is stored in IndexedDB in your own browser, and your messages go straight from the page to whichever provider you connect. Back up and restore your data from **Settings -> Data**.
 
+## Screenshots
+
+<img src="./screenshot1.png" width="45%" alt="Desktop View"> <img src="./screenshot2.png" width="45%" alt="Mobile View">
+
 ## Run it
 
 Requires **Node 22.18+**.
