@@ -2,9 +2,26 @@
 
 A minimal roleplay chat frontend in the spirit of SillyTavern: streaming chat with any OpenAI-compatible API, Tavern character cards (PNG/JSON, import from Chub), lorebooks, swipes, branching, chat memory, and more. It's local-first and runs entirely in the browser as static files - no server, no accounts. Everything (characters, chats, settings, your API key) is stored in IndexedDB in your own browser, and your messages go straight from the page to whichever provider you connect. Back up and restore your data from **Settings -> Data**.
 
-## Screenshots
+## Interface Preview
 
-<img src="./screenshot1.png" width="45%" alt="Desktop View"> <img src="./screenshot2.png" width="45%" alt="Mobile View">
+### 💬 Immersive Chat View
+> Streaming roleplay interface with markdown rendering, dialogue highlighting, swipe branching, character avatars, and memory tracking.
+
+![Chat View](./screenshots/chat-view.png)
+
+### 🎭 Characters & Card Creation
+> Browse your roster in the Character Gallery or inspect and edit detailed Tavern V2/V3 cards.
+
+| Character Gallery | Card Editor |
+| :---: | :---: |
+| [![Character Gallery](./screenshots/character-gallery.png)](./screenshots/character-gallery.png) | [![Character Editor](./screenshots/character-editor.png)](./screenshots/character-editor.png) |
+
+### 📖 Lorebooks & Deep LLM Control
+> World-building lorebooks with keyword activation alongside granular generation and sampling parameters.
+
+| Lorebook Manager | Generation Parameters |
+| :---: | :---: |
+| [![Lorebook Manager](./screenshots/lorebook-manager.png)](./screenshots/lorebook-manager.png) | [![Generation Settings](./screenshots/settings-generation.png)](./screenshots/settings-generation.png) |
 
 ## Run it
 
