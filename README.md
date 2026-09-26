@@ -4,19 +4,19 @@ A minimal roleplay chat frontend in the spirit of SillyTavern: streaming chat wi
 
 ## Interface Preview
 
-### 💬 Immersive Chat View
+### Immersive Chat View
 > Streaming roleplay interface with markdown rendering, dialogue highlighting, swipe branching, character avatars, and memory tracking.
 
 ![Chat View](./screenshots/chat-view.png)
 
-### 🎭 Characters & Card Creation
+### Characters & Card Creation
 > Browse your roster in the Character Gallery or inspect and edit detailed Tavern V2/V3 cards.
 
 | Character Gallery | Card Editor |
 | :---: | :---: |
 | [![Character Gallery](./screenshots/character-gallery.png)](./screenshots/character-gallery.png) | [![Character Editor](./screenshots/character-editor.png)](./screenshots/character-editor.png) |
 
-### 📖 Lorebooks & Deep LLM Control
+### Lorebooks & Deep LLM Control
 > World-building lorebooks with keyword activation alongside granular generation and sampling parameters.
 
 | Lorebook Manager | Generation Parameters |
